@@ -1,3 +1,4 @@
+
 // webview.js
 import express from 'express';
 import chalk from 'chalk';
@@ -14,6 +15,7 @@ export function webview(log) {
   const app = express();
   const port = process.env.PORT || 3000;
   app.disable("x-powered-by");
+  
   // Middleware
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
@@ -23,6 +25,7 @@ export function webview(log) {
     saveUninitialized: false,
     cookie: { secure: false, maxAge: 3600000 } // 1 hour session
   }));
+  
   // Auth middleware
   function authCheck(req, res, next) {
     if (req.session.authenticated) {
@@ -31,6 +34,7 @@ export function webview(log) {
       res.redirect('/');
     }
   }
+  
   // Define paths
   const publicPath = path.join(process.cwd(), 'core', 'public');
   const introPath = path.join(publicPath, 'index.html'); // Intro/login
@@ -40,9 +44,14 @@ export function webview(log) {
   const tokensPath = path.join(publicPath, 'tokens.html');
   const commonJsPath = path.join(publicPath, 'assets', 'common.js');
   const commonCssPath = path.join(publicPath, 'assets', 'common.css');
-  // Initialize global keys as Map
+  
+  // Initialize global keys as Map with "VeronDev" as the key
   if (!global.chaldea) global.chaldea = {};
   global.chaldea.keys = new Map();
+  // Add "VeronDev" as a developer key
+  global.chaldea.keys.set("VeronDev", { isDev: true });
+  console.log(chalk.yellow('Authentication key "VeronDev" loaded as developer key'));
+  
   // Routes
   app.get('/', (req, res) => {
     if (req.session.authenticated) {
@@ -51,21 +60,27 @@ export function webview(log) {
       res.sendFile(introPath);
     }
   });
+  
   app.get('/dashboard.html', authCheck, (req, res) => {
     res.sendFile(dashboardPath);
   });
+  
   app.get('/commands.html', authCheck, (req, res) => {
     res.sendFile(commandsPath);
   });
+  
   app.get('/events.html', authCheck, (req, res) => {
     res.sendFile(eventsPath);
   });
+  
   app.get('/tokens.html', authCheck, (req, res) => {
     res.sendFile(tokensPath);
   });
+  
   app.get('/common.js', (req, res) => {
     res.sendFile(commonJsPath);
   });
+  
   app.get('/common.css', (req, res) => {
     res.sendFile(commonCssPath);
   });
@@ -85,25 +100,49 @@ export function webview(log) {
     return decrypted.toString('utf8');
   }
 
-  // Validate key endpoint
+  // Validate key endpoint - supports both encrypted and plain text keys
   app.post("/api/validate-key", (req, res) => {
-    const { key: encryptedKey } = req.body;
+    const { key } = req.body;
+    
+    if (!key) {
+      return res.json({ success: false, error: 'No key provided' });
+    }
+    
+    let plainKey = key;
+    
+    // Try to decrypt if it's encrypted
     try {
-      const key = decrypt(encryptedKey);
-      const keyData = global.chaldea.keys.get(key);
-      if (!keyData) {
-        return res.json({ success: false, error: 'Invalid key' });
+      // Check if it looks like base64 encrypted
+      if (key.length > 32 && key.match(/^[A-Za-z0-9+/]+={0,2}$/)) {
+        try {
+          plainKey = decrypt(key);
+          console.log(chalk.cyan('Received encrypted key, decrypted to:', plainKey));
+        } catch (decryptError) {
+          // If decryption fails, use as plain text
+          console.log(chalk.yellow('Key decryption failed, using as plain text'));
+        }
       }
-      // Validate and remove key (one-time use)
-      global.chaldea.keys.delete(key);
-      req.session.authenticated = true;
-      req.session.isDeveloper = keyData.isDev;
-      res.json({ success: true });
     } catch (error) {
+      // Continue with plain text
+    }
+    
+    const keyData = global.chaldea.keys.get(plainKey);
+    if (!keyData) {
+      console.log(chalk.red(`Invalid key attempt: ${plainKey.substring(0, 10)}...`));
       return res.json({ success: false, error: 'Invalid key' });
     }
+    
+    // Validate and remove key (one-time use)
+    global.chaldea.keys.delete(plainKey);
+    req.session.authenticated = true;
+    req.session.isDeveloper = keyData.isDev;
+    
+    console.log(chalk.green(`User authenticated with key: ${plainKey} (${keyData.isDev ? 'Developer' : 'User'})`));
+    res.json({ success: true, isDeveloper: keyData.isDev });
   });
+  
   // API Endpoints
+  
   // Bot information endpoint
   app.get("/api/bot-info", (req, res) => {
     try {
@@ -137,6 +176,7 @@ export function webview(log) {
       res.status(500).json({ error: error.message });
     }
   });
+  
   // Commands endpoint
   app.get("/api/commands", (req, res) => {
     try {
@@ -160,6 +200,7 @@ export function webview(log) {
       res.status(500).json({ error: error.message });
     }
   });
+  
   // Events endpoint
   app.get("/api/events", (req, res) => {
     try {
@@ -173,6 +214,7 @@ export function webview(log) {
       res.status(500).json({ error: error.message });
     }
   });
+  
   // Token management
   app.get("/api/tokens", async (req, res) => {
     try {
@@ -204,6 +246,7 @@ export function webview(log) {
       res.status(500).json({ error: error.message });
     }
   });
+  
   app.post("/api/tokens", async (req, res) => {
     const { token } = req.body;
     if (!token || !token.includes(':')) {
@@ -228,6 +271,7 @@ export function webview(log) {
       res.status(500).json({ error: error.message });
     }
   });
+  
   app.delete("/api/tokens/:index", async (req, res) => {
     if (!req.session.isDeveloper) {
       return res.status(403).json({ error: 'Unauthorized' });
@@ -256,6 +300,7 @@ export function webview(log) {
       res.status(500).json({ error: error.message });
     }
   });
+  
   app.post("/api/restart", (req, res) => {
     if (!req.session.isDeveloper) {
       return res.status(403).json({ error: 'Unauthorized' });
@@ -265,14 +310,17 @@ export function webview(log) {
       process.exit(0);
     }, 2000);
   });
+  
   // Notifications endpoint
   app.get('/api/notifications', (req, res) => {
     res.json(global.notif);
   });
+  
   // Health check
   app.get("/health", (req, res) => {
     res.status(200).json({ status: "UP" });
   });
+  
   // Uptime
   app.get("/uptime", (req, res) => {
     res.json({
@@ -280,16 +328,64 @@ export function webview(log) {
       uptimeHuman: convertTime(process.uptime() * 1000)
     });
   });
+  
+  // Admin endpoint to view keys (developer only)
+  app.get("/api/admin/keys", (req, res) => {
+    if (!req.session.isDeveloper) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+    
+    try {
+      const keys = Array.from(global.chaldea.keys.entries()).map(([key, data]) => ({
+        key: key,
+        maskedKey: `${key.substring(0, 4)}...${key.substring(key.length - 4)}`,
+        isDev: data.isDev,
+        length: key.length
+      }));
+      
+      res.json({ 
+        success: true, 
+        total: keys.length,
+        keys: keys 
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+  
+  // Endpoint to generate new keys (developer only)
+  app.post("/api/admin/generate-key", (req, res) => {
+    if (!req.session.isDeveloper) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+    
+    const { isDev = false } = req.body;
+    const newKey = `KEY_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    
+    global.chaldea.keys.set(newKey, { isDev });
+    
+    res.json({
+      success: true,
+      message: 'New key generated',
+      key: newKey,
+      isDev: isDev
+    });
+  });
+  
   // Start server
   app.listen(port, "0.0.0.0", () => {
     log.chaldea(`Chaldea Bot server is running on port ${port}`, 'chaldea');
+    console.log(chalk.green(`Authentication: Use "VeronDev" as the login key`));
+    console.log(chalk.yellow(`Available keys in memory: ${global.chaldea.keys.size}`));
   });
+  
   return app;
 }
+
 function convertTime(ms) {
   const sec = Math.floor((ms / 1000) % 60);
   const min = Math.floor((ms / (1000 * 60)) % 60);
   const hr = Math.floor((ms / (1000 * 60 * 60)) % 24);
   const days = Math.floor(ms / (1000 * 60 * 60 * 24));
   return `${days}d ${hr}h ${min}m ${sec}s`;
-}
+      }
